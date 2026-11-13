@@ -54,7 +54,14 @@ var _ = Describe("Cleaner Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: appsv1.CleanerSpec{
+						DryRun: true,
+						Jira: appsv1.JiraSpec{
+							SecretRef: appsv1.SecretReference{
+								Name: "jira-credentials",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

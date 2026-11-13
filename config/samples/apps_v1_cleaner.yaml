@@ -1,9 +1,41 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jira-credentials
+  namespace: likvidator-system
+  labels:
+    app.kubernetes.io/name: likvidator
+    app.kubernetes.io/managed-by: kustomize
+type: Opaque
+stringData:
+  url: "https://jira.example.com"
+  username: "likvidator-bot"
+  apiToken: "REPLACE_ME"
+---
 apiVersion: apps.altech.com/v1
 kind: Cleaner
 metadata:
   labels:
     app.kubernetes.io/name: likvidator
     app.kubernetes.io/managed-by: kustomize
-  name: cleaner-sample
+  name: cluster-cleaner
+  namespace: likvidator-system
 spec:
-  # TODO(user): Add fields here
+  dryRun: true
+  interval: 15m
+
+  # Namespace с лейблом environment=dev (пусто = только likvidator-system)
+  namespaceSelector:
+    matchLabels:
+      environment: dev
+
+  cleanerLabelKey: cleaner
+  releaseLabelKey: release
+
+  unhealthyDuration: 48h
+  jiraGracePeriod: 24h
+  staleReleaseDuration: 336h
+
+  jira:
+    secretRef:
+      name: jira-credentials

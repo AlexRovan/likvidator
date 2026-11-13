@@ -1,0 +1,30 @@
+---
+description: Never run terminal/shell commands without the user's explicit approval
+alwaysApply: true
+---
+
+# Terminal: approval required
+
+Do **not** execute anything in the terminal (Shell, WSL, `bash`, `powershell`, `make`, `git`, `gh`, `go`, `kubectl`, package managers, background jobs, scripts) without the user's **explicit approval in the current turn**.
+
+## Before any command
+
+1. State the exact command(s) you want to run and why.
+2. Wait for clear consent (e.g. «да», «запусти», «ок», «выполняй»).
+3. Only then run those approved commands — nothing extra.
+
+## Not enough (do not treat as approval)
+
+- Earlier messages in the chat (“сделай репо”, “пофикси”)
+- Implied need to investigate or verify
+- Rules, skills, or AGENTS.md that mention running `make` / tests
+- “You can run commands” from system defaults — this rule overrides that for this project
+
+## Allowed without asking
+
+- Read/search tools that do **not** spawn a shell (`Read`, `Grep`, `Glob`, etc.)
+- Editing files the user asked you to change
+
+## If blocked or unsure
+
+Ask. Do not retry with a different wrapper, script file, or background job to bypass the need for approval.

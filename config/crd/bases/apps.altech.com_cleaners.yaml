@@ -1,0 +1,429 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: cleaners.apps.altech.com
+spec:
+  group: apps.altech.com
+  names:
+    kind: Cleaner
+    listKind: CleanerList
+    plural: cleaners
+    singular: cleaner
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.dryRun
+      name: DryRun
+      type: boolean
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Cleaner is the Schema for the cleaners API.
+          It periodically scans Pods and uninstalls Helm releases that match deletion rules.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Cleaner
+            properties:
+              cleanerLabelKey:
+                default: cleaner
+                description: CleanerLabelKey is the Pod label gate; missing/empty
+                  value skips the Pod.
+                type: string
+              dryRun:
+                default: false
+                description: DryRun logs and updates status without calling helm uninstall.
+                type: boolean
+              interval:
+                default: 15m
+                description: Interval is the requeue period after a successful scan.
+                type: string
+              jira:
+                description: Jira configures access to JIRA for rule JiraClosed.
+                properties:
+                  secretRef:
+                    description: |-
+                      SecretRef is the name of a Secret in the Cleaner's namespace with keys:
+                      url, apiToken, and optional username.
+                    properties:
+                      name:
+                        description: Name of the Secret.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - secretRef
+                type: object
+              jiraGracePeriod:
+                default: 24h
+                description: JiraGracePeriod is how long after a JIRA issue is closed
+                  before rule JiraClosed applies.
+                type: string
+              namespaceSelector:
+                description: |-
+                  NamespaceSelector selects Namespaces to scan by their labels.
+                  If absent or empty, only the Cleaner's own namespace is scanned.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              releaseLabelKey:
+                default: release
+                description: ReleaseLabelKey is the Pod label that holds the Helm
+                  release name.
+                type: string
+              staleReleaseDuration:
+                default: 336h
+                description: StaleReleaseDuration is how long since Helm last_deployed
+                  before rule StaleRelease applies.
+                type: string
+              unhealthyDuration:
+                default: 48h
+                description: |-
+                  UnhealthyDuration is how long CrashLoopBackOff/ImagePullBackOff must persist
+                  before rule Unhealthy applies.
+                type: string
+            required:
+            - jira
+            type: object
+          status:
+            description: status defines the observed state of Cleaner
+            properties:
+              candidates:
+                description: Candidates are observed releases currently eligible for
+                  deletion.
+                items:
+                  description: CandidateRelease is a release eligible for uninstall
+                    on the last scan.
+                  properties:
+                    dryRun:
+                      description: DryRun mirrors spec.dryRun at evaluation time.
+                      type: boolean
+                    name:
+                      description: Name is the Helm release name.
+                      type: string
+                    namespace:
+                      description: Namespace is the release namespace.
+                      type: string
+                    reasons:
+                      description: Reasons are the OR-rules that made the release
+                        eligible.
+                      items:
+                        description: DeletionReason is an OR-rule that made a release
+                          eligible for uninstall.
+                        enum:
+                        - Unhealthy
+                        - JiraClosed
+                        - StaleRelease
+                        type: string
+                      type: array
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                - namespace
+                x-kubernetes-list-type: map
+              conditions:
+                description: |-
+                  Conditions represent the current state of the Cleaner resource.
+                  Types: Ready, Degraded, Progressing. Use metav1.Condition with ObservedGeneration.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              deleted:
+                description: |-
+                  Deleted are releases uninstalled (or that would be uninstalled in dry-run)
+                  on the last / recent pass.
+                items:
+                  description: DeletedRelease records an uninstall (or dry-run would-delete)
+                    outcome.
+                  properties:
+                    deletedAt:
+                      description: DeletedAt is when the uninstall or dry-run decision
+                        was recorded.
+                      format: date-time
+                      type: string
+                    dryRun:
+                      description: DryRun is true when only a would-delete was recorded.
+                      type: boolean
+                    name:
+                      description: Name is the Helm release name.
+                      type: string
+                    namespace:
+                      description: Namespace is the release namespace.
+                      type: string
+                    reasons:
+                      description: Reasons are the OR-rules that triggered deletion.
+                      items:
+                        description: DeletionReason is an OR-rule that made a release
+                          eligible for uninstall.
+                        enum:
+                        - Unhealthy
+                        - JiraClosed
+                        - StaleRelease
+                        type: string
+                      type: array
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                - namespace
+                x-kubernetes-list-type: map
+              lastScanTime:
+                description: LastScanTime is when the last full scan completed.
+                format: date-time
+                type: string
+              observedReleases:
+                description: |-
+                  ObservedReleases are all Helm releases seen on the last scan
+                  (groups of pods with cleaner + release labels), not only deletion candidates.
+                items:
+                  description: ObservedRelease is one Helm release group seen during
+                    a scan.
+                  properties:
+                    eligible:
+                      description: Eligible is true when the release is a deletion
+                        candidate.
+                      type: boolean
+                    jiraIssue:
+                      description: JiraIssue is the parsed issue key from an image
+                        tag, if any.
+                      type: string
+                    lastDeployed:
+                      description: LastDeployed is info.last_deployed from Helm when
+                        available.
+                      format: date-time
+                      type: string
+                    name:
+                      description: Name is the Helm release name from the release
+                        label.
+                      type: string
+                    namespace:
+                      description: Namespace is the release namespace (pod namespace).
+                      type: string
+                    podCount:
+                      description: PodCount is the number of observed pods for this
+                        release on the scan.
+                      format: int32
+                      type: integer
+                    reasons:
+                      description: Reasons are the OR-rules that fired; empty when
+                        not eligible.
+                      items:
+                        description: DeletionReason is an OR-rule that made a release
+                          eligible for uninstall.
+                        enum:
+                        - Unhealthy
+                        - JiraClosed
+                        - StaleRelease
+                        type: string
+                      type: array
+                    unhealthy:
+                      description: Unhealthy is true if any observed pod is in CrashLoopBackOff
+                        or ImagePullBackOff.
+                      type: boolean
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                - namespace
+                x-kubernetes-list-type: map
+              releaseStates:
+                description: ReleaseStates holds persistent per-release timer/grace
+                  state across reconciles.
+                items:
+                  description: ReleaseState is persistent per-release state used for
+                    unhealthy/JIRA/stale timers.
+                  properties:
+                    jiraClosedAt:
+                      description: JiraClosedAt is when the JIRA issue entered a done
+                        category.
+                      format: date-time
+                      type: string
+                    jiraIssue:
+                      description: JiraIssue is the last known issue key parsed from
+                        an image tag.
+                      type: string
+                    lastDeployed:
+                      description: LastDeployed mirrors Helm info.last_deployed for
+                        observability.
+                      format: date-time
+                      type: string
+                    lastReason:
+                      description: LastReason is the last evaluated set of deletion
+                        reasons for this release.
+                      items:
+                        description: DeletionReason is an OR-rule that made a release
+                          eligible for uninstall.
+                        enum:
+                        - Unhealthy
+                        - JiraClosed
+                        - StaleRelease
+                        type: string
+                      type: array
+                    name:
+                      description: Name is the Helm release name.
+                      type: string
+                    namespace:
+                      description: Namespace is the release namespace.
+                      type: string
+                    unhealthySince:
+                      description: UnhealthySince is when a bad waiting reason was
+                        first observed continuously.
+                      format: date-time
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                - namespace
+                x-kubernetes-list-type: map
+              selectedNamespaces:
+                description: SelectedNamespaces are namespaces matched by namespaceSelector
+                  on the last scan.
+                items:
+                  type: string
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
