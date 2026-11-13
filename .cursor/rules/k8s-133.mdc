@@ -1,0 +1,26 @@
+---
+description: Target Kubernetes 1.33 API and client compatibility for likvidator
+alwaysApply: true
+---
+
+# Kubernetes 1.33 Target
+
+This operator MUST be compatible with **Kubernetes 1.33**.
+
+## Dependencies
+
+- Pin `k8s.io/api`, `k8s.io/apimachinery`, `k8s.io/client-go` to **v0.33.x** (same minor).
+- Use a `controller-runtime` release that supports Kubernetes 1.33; do not bump to a newer k8s.io line without an explicit decision.
+- After dependency changes: `go mod tidy`, then `make test`.
+
+## API usage
+
+- Prefer **stable** APIs available in 1.33 (`apps/v1`, `batch/v1`, `core/v1`, …).
+- Do not use APIs removed or gated-off in 1.33.
+- Before adopting a beta/alpha API, confirm it exists and is usable on 1.33.
+- CRDs: `apiextensions.k8s.io/v1` only.
+
+## Runtime assumptions
+
+- Cluster features, defaulting, and validation must work on a stock 1.33 API server.
+- E2E / Kind images MUST match 1.33 (or document the exact patch, e.g. `v1.33.x`).

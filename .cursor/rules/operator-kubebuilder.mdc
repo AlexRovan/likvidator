@@ -1,0 +1,38 @@
+---
+description: Kubebuilder scaffold, generated files, and project layout for likvidator
+alwaysApply: true
+---
+
+# Kubebuilder / Project Layout
+
+Domain: `altech.com`. Module: `altech.com/operator`. Primary CR: `Cleaner` (`apps.altech.com/v1`).
+
+## Never edit (regenerated)
+
+- `config/crd/bases/*.yaml`, `config/rbac/role.yaml`, `config/webhook/manifests.yaml` → `make manifests`
+- `**/zz_generated.*.go` → `make generate`
+- `PROJECT` → only via `kubebuilder` CLI
+
+## Scaffold markers
+
+Do not remove `// +kubebuilder:scaffold:*` comments.
+
+## After API / marker changes
+
+```sh
+make manifests generate
+make lint-fix test
+```
+
+## Create APIs / webhooks
+
+Use CLI only — do not hand-create API or webhook files:
+
+```sh
+kubebuilder create api --group <group> --version <version> --kind <Kind>
+kubebuilder create webhook --group <group> --version <version> --kind <Kind> ...
+```
+
+## Layout
+
+Keep single-group layout unless `multigroup: true` is set in `PROJECT`. Do not move `api/`, `internal/controller/`, or `config/` paths arbitrarily.

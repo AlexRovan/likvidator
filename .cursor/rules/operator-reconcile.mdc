@@ -1,0 +1,36 @@
+---
+description: Reconcile loop, status, finalizers, and RBAC patterns for controllers
+globs: internal/controller/**/*.go,api/**/*.go
+alwaysApply: false
+---
+
+# Controller / Reconcile
+
+## Reconcile contract
+
+- Reconcile MUST be **idempotent**: same object → same desired outcome.
+- Propagate `ctx`; do not use `context.Background()` inside Reconcile.
+- On requeue: prefer `ctrl.Result{RequeueAfter: ...}` or return `error` for exponential backoff — avoid busy loops.
+- Ignore not-found on Get when the object was deleted (return empty Result).
+
+## Status
+
+- Observed state lives in `.status` only; never mirror desired config into status unnecessarily.
+- Use `metav1.Condition` (`Conditions` on `CleanerStatus`); set `Type`, `Status`, `Reason`, `Message`, `ObservedGeneration`.
+- Patch status via `Status().Patch` / `Status().Update` — do not conflate with spec updates.
+
+## Ownership and cleanup
+
+- Set **owner references** on created child objects so GC cleans them up.
+- Use **finalizers** only when the operator must delete external/non-owned resources; remove the finalizer only after cleanup succeeds.
+- Deletion path: if `DeletionTimestamp != nil`, run cleanup, then remove finalizer; skip normal reconcile.
+
+## RBAC
+
+- Declare least-privilege `// +kubebuilder:rbac:` markers next to the reconciler; regenerate with `make manifests`.
+- Do not request cluster-wide verbs the Cleaner does not need.
+
+## Logging / errors
+
+- Use `logf.FromContext(ctx)`; past-tense error messages (`"Could not patch Cleaner status"`).
+- Return wrapped errors: `fmt.Errorf("...: %w", err)`.

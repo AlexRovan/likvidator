@@ -1,0 +1,9 @@
+apiVersion: apps.altech.com/v1
+kind: Cleaner
+metadata:
+  labels:
+    app.kubernetes.io/name: likvidator
+    app.kubernetes.io/managed-by: kustomize
+  name: cleaner-sample
+spec:
+  # TODO(user): Add fields here

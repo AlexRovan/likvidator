@@ -1,0 +1,30 @@
+---
+description: CRD/API design conventions for Cleaner and future types
+globs: api/**/*.go,config/samples/**/*.yaml
+alwaysApply: false
+---
+
+# API / CRD Design
+
+## Spec vs status
+
+- `spec` = desired state (user-writable).
+- `status` = observed state (controller-writable only).
+- New fields need json tags, markers, and docs comments for OpenAPI.
+
+## Validation
+
+- Prefer kubebuilder validation markers (`+kubebuilder:validation:...`, `+optional`, `+required`) over ad-hoc controller checks when possible.
+- Breaking changes to `v1` require a clear migration plan (or a new version); do not silently change field meaning.
+
+## Samples and docs
+
+- Keep `config/samples/` valid and usable against a 1.33 cluster.
+- Field comments should describe behavior, defaults, and units (e.g. durations).
+
+## After edits
+
+```sh
+make manifests generate
+make test
+```
