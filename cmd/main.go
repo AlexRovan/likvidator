@@ -25,10 +25,12 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -36,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	appsv1 "altech.com/operator/api/v1"
+	"altech.com/operator/internal/agentdebug"
 	"altech.com/operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -159,7 +162,18 @@ func main() {
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
+		Scheme: scheme,
+		// Secrets and Namespaces are read live. The manager ClusterRole grants
+		// get/list (and delete for Secrets) but not watch, so a cached client
+		// would start a cluster-scoped watch and the API would reject it.
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{
+					&corev1.Secret{},
+					&corev1.Namespace{},
+				},
+			},
+		},
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -181,6 +195,12 @@ func main() {
 		setupLog.Error(err, "Failed to start manager")
 		os.Exit(1)
 	}
+	// #region agent log
+	agentdebug.Log("A", "cmd/main.go:manager", "cache bypass configured", map[string]any{
+		"disableFor": []string{"Secret", "Namespace"},
+	})
+	setupLog.Info("Agent debug cache bypass configured", "disableFor", []string{"Secret", "Namespace"}, "hypothesisId", "A")
+	// #endregion
 
 	if err := (&controller.CleanerReconciler{
 		Client:   mgr.GetClient(),

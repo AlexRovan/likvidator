@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appsv1 "altech.com/operator/api/v1"
+	"altech.com/operator/internal/agentdebug"
 	"altech.com/operator/internal/helm"
 	"altech.com/operator/internal/jira"
 	"altech.com/operator/internal/policy"
@@ -101,9 +102,22 @@ func (r *CleanerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Namespace: cleaner.Namespace,
 		Name:      cleaner.Spec.Jira.SecretRef.Name,
 	}, secret); err != nil {
+		// #region agent log
+		agentdebug.Log("A", "cleaner_controller.go:Reconcile", "jira secret get failed", map[string]any{
+			"namespace": cleaner.Namespace,
+			"err":       err.Error(),
+		})
+		log.Info("Agent debug jira secret get failed", "hypothesisId", "A", "err", err.Error())
+		// #endregion
 		_ = r.patchDegraded(ctx, &cleaner, reasonSecretError, fmt.Sprintf("Could not get JIRA Secret: %v", err))
 		return ctrl.Result{}, fmt.Errorf("get JIRA Secret: %w", err)
 	}
+	// #region agent log
+	agentdebug.Log("A", "cleaner_controller.go:Reconcile", "jira secret get ok", map[string]any{
+		"namespace": cleaner.Namespace,
+	})
+	log.Info("Agent debug jira secret get ok", "hypothesisId", "A")
+	// #endregion
 
 	creds, err := jira.CredentialsFromSecret(secret)
 	if err != nil {
@@ -346,6 +360,11 @@ func (r *CleanerReconciler) event(cleaner *appsv1.Cleaner, eventType, reason, me
 
 func (r *CleanerReconciler) resolveNamespaces(ctx context.Context, cleaner *appsv1.Cleaner) ([]string, error) {
 	if isEmptyNamespaceSelector(cleaner.Spec.NamespaceSelector) {
+		// #region agent log
+		agentdebug.Log("F", "cleaner_controller.go:resolveNamespaces", "namespace selector empty", map[string]any{
+			"namespace": cleaner.Namespace,
+		})
+		// #endregion
 		return []string{cleaner.Namespace}, nil
 	}
 	selector, err := metav1.LabelSelectorAsSelector(cleaner.Spec.NamespaceSelector)
@@ -354,8 +373,20 @@ func (r *CleanerReconciler) resolveNamespaces(ctx context.Context, cleaner *apps
 	}
 	var nsList corev1.NamespaceList
 	if err := r.List(ctx, &nsList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		// #region agent log
+		agentdebug.Log("F", "cleaner_controller.go:resolveNamespaces", "namespace list failed", map[string]any{
+			"err": err.Error(),
+		})
+		logf.FromContext(ctx).Info("Agent debug namespace list failed", "hypothesisId", "F", "err", err.Error())
+		// #endregion
 		return nil, err
 	}
+	// #region agent log
+	agentdebug.Log("F", "cleaner_controller.go:resolveNamespaces", "namespace list ok", map[string]any{
+		"count": len(nsList.Items),
+	})
+	logf.FromContext(ctx).Info("Agent debug namespace list ok", "hypothesisId", "F", "count", len(nsList.Items))
+	// #endregion
 	names := make([]string, 0, len(nsList.Items))
 	for i := range nsList.Items {
 		names = append(names, nsList.Items[i].Name)
