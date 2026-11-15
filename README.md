@@ -1,121 +1,172 @@
 # likvidator
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Kubernetes-оператор, который удаляет устаревшие **Helm-релизы** по правилам очистки.
+
+Полная спецификация: [docs/SPEC.md](docs/SPEC.md).
+
+## Как это работает
+
+Создаёте namespaced CR `Cleaner` (`apps.altech.com/v1`). Контроллер периодически:
+
+1. Выбирает Namespace по `spec.namespaceSelector` (пустой селектор → только namespace самого `Cleaner`).
+2. Ищет Pod с лейблом-гейтом (`cleaner` по умолчанию).
+3. Группирует их по лейблу `release` (имя Helm-релиза).
+4. Оценивает OR-условия и при необходимости делает uninstall (или только пишет status в `dryRun`).
+
+**Без лейбла `cleaner` релиз не удаляется.**
+
+### Условия удаления (OR)
+
+| Причина | Когда |
+|---------|--------|
+| `Unhealthy` | У Pod есть `CrashLoopBackOff` / `ImagePullBackOff` непрерывно ≥ `unhealthyDuration` (default `48h`) |
+| `JiraClosed` | Тег образа `PROJ-123-abc12` → issue `PROJ-123` закрыта в JIRA ≥ `jiraGracePeriod` (default `24h`) |
+| `StaleRelease` | Helm `info.last_deployed` старше `staleReleaseDuration` (default `336h` = 14 дней) |
+
+### Status
+
+После скана у `Cleaner` видно:
+
+- `observedReleases` — все наблюдаемые релизы
+- `candidates` — eligible к удалению
+- `deleted` — удалены или «would delete» при dry-run
+- `releaseStates` — таймеры между reconcile
+- `conditions` — `Ready` / `Degraded` / `Progressing`
+
+## JIRA Secret
+
+Secret в **том же namespace**, что и `Cleaner` (`spec.jira.secretRef.name`):
+
+| Ключ | Обязательный | Описание |
+|------|--------------|----------|
+| `url` | да | Base URL, например `https://jira.example.com` |
+| `apiToken` | да | API token / пароль |
+| `username` | нет | Если задан — HTTP Basic; иначе Bearer `apiToken` |
+
+Пример:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jira-credentials
+  namespace: likvidator-system
+type: Opaque
+stringData:
+  url: "https://jira.example.com"
+  username: "likvidator-bot"
+  apiToken: "REPLACE_ME"
+```
+
+## Пример Cleaner
+
+Sample: [config/samples/apps_v1_cleaner.yaml](config/samples/apps_v1_cleaner.yaml) (`dryRun: true`).
+
+```yaml
+apiVersion: apps.altech.com/v1
+kind: Cleaner
+metadata:
+  name: cluster-cleaner
+  namespace: likvidator-system
+spec:
+  dryRun: true
+  interval: 15m
+  namespaceSelector:
+    matchLabels:
+      environment: dev
+  cleanerLabelKey: cleaner
+  releaseLabelKey: release
+  unhealthyDuration: 48h
+  jiraGracePeriod: 24h
+  staleReleaseDuration: 336h
+  jira:
+    secretRef:
+      name: jira-credentials
+```
+
+Pod-кандидат:
+
+```yaml
+metadata:
+  labels:
+    cleaner: "true"
+    release: demo-app
+spec:
+  containers:
+    - image: registry.example.com/demo:PROJ-123-abc12
+```
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Go 1.26+
+- Docker 17.03+
+- kubectl
+- Kubernetes cluster (для deploy / e2e)
 
-```sh
-make docker-build docker-push IMG=<some-registry>/likvidator:tag
-```
-
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+### Deploy
 
 ```sh
+make docker-build docker-push IMG=<registry>/likvidator:tag
 make install
-```
-
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
-```sh
-make deploy IMG=<some-registry>/likvidator:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
+make deploy IMG=<registry>/likvidator:tag
+kubectl create namespace likvidator-system   # если ещё нет
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+Перед продом замените `apiToken` в Secret и при необходимости выставьте `dryRun: false`.
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### Uninstall
 
 ```sh
 kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
+make undeploy
 make uninstall
 ```
 
-**UnDeploy the controller from the cluster:**
+### Bundle
 
 ```sh
-make undeploy
+make build-installer IMG=<registry>/likvidator:tag
+kubectl apply -f dist/install.yaml
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+## Development / Tests
 
 ```sh
-make build-installer IMG=<some-registry>/likvidator:tag
+# unit (policy, podutil, jira, helm) + controller envtest
+make test
+
+# только пакеты без envtest
+go test ./internal/policy/ ./internal/podutil/ ./internal/jira/ ./internal/helm/
+
+make run   # локально против текущего kubeconfig
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+`make test` скачивает envtest binaries (`setup-envtest`). Нужен доступ к GitHub releases.
 
-2. Using the installer
+### Покрытие controller (envtest)
 
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+В `internal/controller/cleaner_controller_test.go`:
 
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/likvidator/<tag or branch>/dist/install.yaml
+- пустой скан без labeled pods
+- stale release + `dryRun: true` → candidate/deleted без uninstall
+- pod без лейбла `cleaner` → не наблюдается
+- unhealthy ≥ 48h + `dryRun: false` → mock Helm uninstall
+
+## Project layout
+
+```text
+api/v1/                 Cleaner CRD types
+internal/controller/    Reconcile
+internal/helm/          Get last_deployed + Uninstall (secret storage)
+internal/jira/          Secret loader + REST client
+internal/policy/        OR rules + image tag parse
+internal/podutil/       CrashLoop / ImagePull detect
+config/samples/         пример Cleaner + Secret
+docs/SPEC.md            спецификация
 ```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
@@ -132,4 +183,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-

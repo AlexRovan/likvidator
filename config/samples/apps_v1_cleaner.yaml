@@ -1,3 +1,13 @@
+# Example Cleaner + JIRA Secret. Create the namespace first if needed:
+#   kubectl create namespace likvidator-system
+# Replace apiToken before use. Sample runs with dryRun: true (no helm uninstall).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: likvidator-system
+  labels:
+    app.kubernetes.io/name: likvidator
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -24,7 +34,7 @@ spec:
   dryRun: true
   interval: 15m
 
-  # Namespace с лейблом environment=dev (пусто = только likvidator-system)
+  # Namespaces labeled environment=dev (empty selector = only Cleaner's namespace)
   namespaceSelector:
     matchLabels:
       environment: dev
