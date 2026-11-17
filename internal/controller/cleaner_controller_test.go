@@ -24,7 +24,9 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -39,6 +41,7 @@ import (
 // - stale Helm release + dryRun → candidates/deleted, no uninstall
 // - pod without cleaner label → ignored
 // - unhealthy >= 48h + dryRun=false → mock Helm uninstall
+// - Forbidden uninstall → Degraded, no deleted, no hard reconcile error
 var _ = Describe("Cleaner Controller", func() {
 	const (
 		resourceName      = "test-resource"
@@ -268,5 +271,82 @@ var _ = Describe("Cleaner Controller", func() {
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fakeHelm.Uninstalled).To(Equal([]string{resourceNamespace + "/crash-app"}))
+	})
+
+	It("should degrade when uninstall is Forbidden without marking deleted", func() {
+		now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+		fakeHelm := &helm.Fake{
+			UninstallErr: errors.NewForbidden(
+				schema.GroupResource{Group: "policy", Resource: "poddisruptionbudgets"},
+				"nginx",
+				nil,
+			),
+		}
+		fakeHelm.SetRelease(helm.ReleaseInfo{
+			Name:         "crash-app",
+			Namespace:    resourceNamespace,
+			LastDeployed: now.Add(-1 * time.Hour),
+		})
+
+		cleaner := &appsv1.Cleaner{}
+		Expect(k8sClient.Get(ctx, typeNamespacedName, cleaner)).To(Succeed())
+		cleaner.Spec.DryRun = false
+		Expect(k8sClient.Update(ctx, cleaner)).To(Succeed())
+
+		cleaner.Status.ReleaseStates = []appsv1.ReleaseState{{
+			Name:           "crash-app",
+			Namespace:      resourceNamespace,
+			UnhealthySince: &metav1.Time{Time: now.Add(-49 * time.Hour)},
+		}}
+		Expect(k8sClient.Status().Update(ctx, cleaner)).To(Succeed())
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "demo-pod",
+				Namespace: resourceNamespace,
+				Labels: map[string]string{
+					"cleaner": "true",
+					"release": "crash-app",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:  "app",
+					Image: "registry.example.com/demo:latest",
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name: "app",
+			State: corev1.ContainerState{
+				Waiting: &corev1.ContainerStateWaiting{Reason: podutil.ReasonCrashLoopBackOff},
+			},
+		}}
+		Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+		recorder := record.NewFakeRecorder(10)
+		reconciler := &CleanerReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: recorder,
+			Helm:     fakeHelm,
+			Now:      func() time.Time { return now },
+		}
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fakeHelm.Uninstalled).To(BeEmpty())
+
+		updated := &appsv1.Cleaner{}
+		Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+		Expect(updated.Status.Candidates).To(HaveLen(1))
+		Expect(updated.Status.Deleted).To(BeEmpty())
+		cond := meta.FindStatusCondition(updated.Status.Conditions, appsv1.ConditionDegraded)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond.Reason).To(Equal(reasonUninstallForbidden))
+
+		Eventually(recorder.Events).Should(Receive(ContainSubstring(reasonUninstallForbidden)))
 	})
 })

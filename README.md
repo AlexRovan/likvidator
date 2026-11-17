@@ -15,6 +15,19 @@ Kubernetes-оператор, который удаляет устаревшие 
 
 **Без лейбла `cleaner` релиз не удаляется.**
 
+### Делегирование uninstall (RBAC)
+
+Discovery (Pods / Namespaces / чтение Secrets) — cluster-wide у manager SA.  
+**Delete / Helm uninstall** — только если в целевом namespace есть RoleBinding на `likvidator-release-cleaner-role` (в т.ч. PDB).
+
+```sh
+# Подставьте namespace релиза (например vika)
+sed 's/REPLACE_WITH_TARGET_NAMESPACE/vika/' \
+  config/samples/apps_v1_release_cleaner_rolebinding.yaml | kubectl apply -f -
+```
+
+Без RoleBinding: `dryRun` / candidates работают; реальный uninstall даст Forbidden и Condition `Degraded` (`UninstallForbidden`).
+
 ### Условия удаления (OR)
 
 | Причина | Когда |
@@ -164,7 +177,8 @@ internal/helm/          Get last_deployed + Uninstall (secret storage)
 internal/jira/          Secret loader + REST client
 internal/policy/        OR rules + image tag parse
 internal/podutil/       CrashLoop / ImagePull detect
-config/samples/         пример Cleaner + Secret
+config/rbac/            manager ClusterRole + release-cleaner (RoleBinding per ns)
+config/samples/         Cleaner, Secret, RoleBinding example
 docs/SPEC.md            спецификация
 ```
 

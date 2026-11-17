@@ -1,0 +1,74 @@
+# Hand-maintained ClusterRole for Helm uninstall in target namespaces.
+# Do NOT generate this from +kubebuilder:rbac markers / make manifests.
+#
+# Deploy installs this ClusterRole but does NOT bind it cluster-wide.
+# Namespace admins must create a RoleBinding that references this role
+# (after namePrefix: likvidator-release-cleaner-role) and the controller
+# ServiceAccount (likvidator-controller-manager in likvidator-system).
+#
+# Example: config/samples/apps_v1_release_cleaner_rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: likvidator
+    app.kubernetes.io/managed-by: kustomize
+  name: release-cleaner-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - persistentvolumeclaims
+  - secrets
+  - serviceaccounts
+  - services
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - delete
+  - get
+  - list

@@ -1,0 +1,23 @@
+# Grant likvidator uninstall rights in one target namespace.
+# Apply AFTER deploying the operator (ClusterRole likvidator-release-cleaner-role).
+# Replace metadata.namespace with each namespace you want cleaned.
+#
+#   kubectl apply -f config/samples/apps_v1_release_cleaner_rolebinding.yaml
+#
+# Not included in samples kustomization — apply per target namespace on purpose.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: likvidator-release-cleaner
+  namespace: REPLACE_WITH_TARGET_NAMESPACE
+  labels:
+    app.kubernetes.io/name: likvidator
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: likvidator-release-cleaner-role
+subjects:
+- kind: ServiceAccount
+  name: likvidator-controller-manager
+  namespace: likvidator-system

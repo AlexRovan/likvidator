@@ -27,6 +27,8 @@ type Fake struct {
 	mu          sync.Mutex
 	Releases    map[string]ReleaseInfo // key: namespace/name
 	Uninstalled []string               // "namespace/name"
+	// UninstallErr, if set, is returned from Uninstall without mutating Releases.
+	UninstallErr error
 }
 
 func releaseKey(name, namespace string) string {
@@ -51,6 +53,9 @@ func (f *Fake) Get(_ context.Context, name, namespace string) (ReleaseInfo, erro
 func (f *Fake) Uninstall(_ context.Context, name, namespace string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.UninstallErr != nil {
+		return f.UninstallErr
+	}
 	key := releaseKey(name, namespace)
 	if f.Releases == nil {
 		return ErrNotFound

@@ -164,8 +164,9 @@ func main() {
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		// Secrets and Namespaces are read live. The manager ClusterRole grants
-		// get/list (and delete for Secrets) but not watch, so a cached client
-		// would start a cluster-scoped watch and the API would reject it.
+		// get/list but not watch, so a cached client would start a
+		// cluster-scoped watch and the API would reject it.
+		// Secret delete for Helm uninstall is via per-namespace RoleBinding.
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{

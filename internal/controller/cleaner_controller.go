@@ -45,13 +45,14 @@ import (
 )
 
 const (
-	reasonSecretError   = "SecretError"
-	reasonJiraError     = "JiraError"
-	reasonScanError     = "ScanError"
-	reasonReconcileOK   = "ReconcileSucceeded"
-	reasonDryRunDelete  = "DryRunWouldDelete"
-	reasonUninstalled   = "Uninstalled"
-	reasonUninstallFail = "UninstallFailed"
+	reasonSecretError         = "SecretError"
+	reasonJiraError           = "JiraError"
+	reasonScanError           = "ScanError"
+	reasonReconcileOK         = "ReconcileSucceeded"
+	reasonDryRunDelete        = "DryRunWouldDelete"
+	reasonUninstalled         = "Uninstalled"
+	reasonUninstallFail       = "UninstallFailed"
+	reasonUninstallForbidden  = "UninstallForbidden"
 )
 
 // CleanerReconciler reconciles a Cleaner object.
@@ -68,19 +69,15 @@ type CleanerReconciler struct {
 	Now func() time.Time
 }
 
+// Discovery + Cleaner CR (ClusterRoleBinding). Uninstall verbs live in
+// config/rbac/release_cleaner_role.yaml and require a per-namespace RoleBinding.
 // +kubebuilder:rbac:groups=apps.altech.com,resources=cleaners,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps.altech.com,resources=cleaners/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps.altech.com,resources=cleaners/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;delete
-// +kubebuilder:rbac:groups="",resources=services;serviceaccounts;persistentvolumeclaims,verbs=get;list;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;daemonsets;replicasets,verbs=get;list;delete
-// +kubebuilder:rbac:groups=batch,resources=jobs;cronjobs,verbs=get;list;delete
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses;networkpolicies,verbs=get;list;delete
-// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;delete
 
 // Reconcile scans labeled pods and uninstalls eligible Helm releases.
 func (r *CleanerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -180,6 +177,7 @@ func (r *CleanerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	})
 
 	var uninstallErr error
+	var forbiddenUninstall bool
 	for _, key := range keys {
 		podList := groups[key]
 		helmInfo := policy.HelmInfo{}
@@ -263,6 +261,12 @@ func (r *CleanerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if err := helmClient.Uninstall(ctx, key.name, key.namespace); err != nil {
 			if errors.Is(err, helm.ErrNotFound) {
 				log.Info("Helm release already gone", "release", key.name, "namespace", key.namespace)
+			} else if isForbidden(err) {
+				forbiddenUninstall = true
+				r.event(&cleaner, corev1.EventTypeWarning, reasonUninstallForbidden,
+					fmt.Sprintf("Forbidden uninstalling Helm release %s/%s: create RoleBinding for likvidator-release-cleaner-role in that namespace (%v)",
+						key.namespace, key.name, err))
+				continue
 			} else {
 				r.event(&cleaner, corev1.EventTypeWarning, reasonUninstallFail,
 					fmt.Sprintf("Could not uninstall Helm release %s/%s: %v", key.namespace, key.name, err))
@@ -288,18 +292,32 @@ func (r *CleanerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		status.Candidates = candidates
 		status.Deleted = deleted
 		status.ReleaseStates = newStates
+		readyStatus := metav1.ConditionTrue
+		readyReason := reasonReconcileOK
+		readyMessage := "Scan completed"
+		degradedStatus := metav1.ConditionFalse
+		degradedReason := reasonReconcileOK
+		degradedMessage := "Scan completed"
+		if forbiddenUninstall {
+			readyStatus = metav1.ConditionFalse
+			readyReason = reasonUninstallForbidden
+			readyMessage = "Uninstall forbidden in one or more namespaces; create RoleBinding for likvidator-release-cleaner-role"
+			degradedStatus = metav1.ConditionTrue
+			degradedReason = reasonUninstallForbidden
+			degradedMessage = readyMessage
+		}
 		meta.SetStatusCondition(&status.Conditions, metav1.Condition{
 			Type:               appsv1.ConditionReady,
-			Status:             metav1.ConditionTrue,
-			Reason:             reasonReconcileOK,
-			Message:            "Scan completed",
+			Status:             readyStatus,
+			Reason:             readyReason,
+			Message:            readyMessage,
 			ObservedGeneration: cleaner.Generation,
 		})
 		meta.SetStatusCondition(&status.Conditions, metav1.Condition{
 			Type:               appsv1.ConditionDegraded,
-			Status:             metav1.ConditionFalse,
-			Reason:             reasonReconcileOK,
-			Message:            "Scan completed",
+			Status:             degradedStatus,
+			Reason:             degradedReason,
+			Message:            degradedMessage,
 			ObservedGeneration: cleaner.Generation,
 		})
 		meta.SetStatusCondition(&status.Conditions, metav1.Condition{
@@ -496,6 +514,25 @@ func stringOr(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// isForbidden reports whether err is (or wraps) a Kubernetes Forbidden status.
+func isForbidden(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apierrors.IsForbidden(err) {
+		return true
+	}
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		for _, e := range joined.Unwrap() {
+			if isForbidden(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func durationOr(d *metav1.Duration, def time.Duration) time.Duration {
